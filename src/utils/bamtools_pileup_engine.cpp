@@ -11,6 +11,7 @@
 using namespace BamTools;
 
 #include <iostream>
+#include <list>
 using namespace std;
 
 // ---------------------------------------------
@@ -21,11 +22,12 @@ struct PileupEngine::PileupEnginePrivate {
     // data members
     int CurrentId;
     int CurrentPosition;
-    vector<BamAlignment> CurrentAlignments;
+    list<BamAlignment> CurrentAlignments;
     PileupPosition CurrentPileupData;
     
     bool IsFirstAlignment;
     vector<PileupVisitor*> Visitors;
+    vector<DiscardAlignmentVisitor*> DiscardVisitors;
   
     // ctor & dtor
     PileupEnginePrivate(void)
@@ -42,7 +44,7 @@ struct PileupEngine::PileupEnginePrivate {
     // internal methods
     private:
         void ApplyVisitors(void);
-        void ClearOldData(void);
+        void ClearOldData(bool all);
         void CreatePileupData(void);
         void ParseAlignmentCigar(const BamAlignment& al);
 };
@@ -57,7 +59,7 @@ bool PileupEngine::PileupEnginePrivate::AddAlignment(const BamAlignment& al) {
         CurrentPosition = al.Position;
         
         // store first entry
-        CurrentAlignments.clear();
+        ClearOldData(true);
         CurrentAlignments.push_back(al);
         
         // set flag & return
@@ -104,7 +106,7 @@ bool PileupEngine::PileupEnginePrivate::AddAlignment(const BamAlignment& al) {
         }
         
         // store first entry on this new reference, update markers
-        CurrentAlignments.clear();
+        ClearOldData(true);
         CurrentAlignments.push_back(al);
         CurrentId = al.RefID;
         CurrentPosition = al.Position;
@@ -125,44 +127,40 @@ void PileupEngine::PileupEnginePrivate::ApplyVisitors(void) {
         (*visitorIter)->Visit(CurrentPileupData);
 }
 
-void PileupEngine::PileupEnginePrivate::ClearOldData(void) {
+void PileupEngine::PileupEnginePrivate::ClearOldData(bool all) {
  
     // remove any alignments that end before our CurrentPosition
     // N.B. - BAM positions are 0-based, half-open. GetEndPosition() returns a 1-based position,
     //        while our CurrentPosition is 0-based. For example, an alignment with 'endPosition' of
     //        100 does not overlap a 'CurrentPosition' of 100, and should be discarded.
 
-    size_t i = 0;
-    size_t j = 0;
-    const size_t numAlignments = CurrentAlignments.size();
-    while ( i < numAlignments ) {
-
-        // skip over alignment if its (1-based) endPosition is <= to (0-based) CurrentPosition
-        // i.e. this entry will not be saved upon vector resize
-        const int endPosition = CurrentAlignments[i].GetEndPosition();
-        if ( endPosition <= CurrentPosition ) {
-            ++i;
-            continue;
+    list<BamAlignment>::iterator alIter = CurrentAlignments.begin();
+    list<BamAlignment>::const_iterator alEnd  = CurrentAlignments.end();
+    while ( alIter != alEnd ) {
+		
+        // remove alignment if its (1-based) endPosition is <= to (0-based) CurrentPosition
+        const int endPosition = alIter->GetEndPosition();
+        if ( all || endPosition <= CurrentPosition ) {
+			
+			// apply all discard alignment visitors to current alignment set
+			vector<DiscardAlignmentVisitor*>::const_iterator visitorIter = DiscardVisitors.begin();
+			vector<DiscardAlignmentVisitor*>::const_iterator visitorEnd  = DiscardVisitors.end();
+			for ( ; visitorIter != visitorEnd; ++visitorIter )
+				(*visitorIter)->Visit(*alIter);
+			
+			alIter = CurrentAlignments.erase(alIter);
         }
-
-        // otherwise alignment ends after CurrentPosition
-        // move it towards vector beginning, at index j
-        if ( i != j )
-            CurrentAlignments[j] = CurrentAlignments[i];
-
-        // increment our indices
-        ++i;
-        ++j;
-    }
-
-    // 'squeeze' vector to size j, discarding all remaining alignments in the container
-    CurrentAlignments.resize(j);
+		else {
+			
+			alIter++;
+		}
+	}
 }
 
 void PileupEngine::PileupEnginePrivate::CreatePileupData(void) {
   
     // remove any non-overlapping alignments
-    ClearOldData();
+    ClearOldData(false);
   
     // set pileup refId, position to current markers
     CurrentPileupData.RefId = CurrentId;
@@ -170,8 +168,8 @@ void PileupEngine::PileupEnginePrivate::CreatePileupData(void) {
     CurrentPileupData.PileupAlignments.clear();
     
     // parse CIGAR data in remaining alignments 
-    vector<BamAlignment>::const_iterator alIter = CurrentAlignments.begin();
-    vector<BamAlignment>::const_iterator alEnd  = CurrentAlignments.end(); 
+    list<BamAlignment>::const_iterator alIter = CurrentAlignments.begin();
+    list<BamAlignment>::const_iterator alEnd  = CurrentAlignments.end(); 
     for ( ; alIter != alEnd; ++alIter )
         ParseAlignmentCigar( (*alIter) );
 }
@@ -343,4 +341,5 @@ PileupEngine::~PileupEngine(void) {
 
 bool PileupEngine::AddAlignment(const BamAlignment& al) { return d->AddAlignment(al); }
 void PileupEngine::AddVisitor(PileupVisitor* visitor) { d->Visitors.push_back(visitor); }
+void PileupEngine::AddVisitor(DiscardAlignmentVisitor* visitor) { d->DiscardVisitors.push_back(visitor); }
 void PileupEngine::Flush(void) { d->Flush(); }

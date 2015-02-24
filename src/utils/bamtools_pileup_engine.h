@@ -74,8 +74,18 @@ class UTILS_EXPORT PileupVisitor {
         virtual void Visit(const PileupPosition& pileupData) =0;
 };
 
+class UTILS_EXPORT DiscardAlignmentVisitor {
+		
+    public:
+        DiscardAlignmentVisitor(void) { }
+        virtual ~DiscardAlignmentVisitor(void) { }
+		
+    public:
+        virtual void Visit(const BamAlignment& a) =0;
+};
+	
 class UTILS_EXPORT PileupEngine {
-  
+    
     public:
         PileupEngine(void);
         ~PileupEngine(void);
@@ -83,6 +93,7 @@ class UTILS_EXPORT PileupEngine {
     public:
         bool AddAlignment(const BamAlignment& al);
         void AddVisitor(PileupVisitor* visitor);
+        void AddVisitor(DiscardAlignmentVisitor* visitor);
         void Flush(void);
         
     private:
